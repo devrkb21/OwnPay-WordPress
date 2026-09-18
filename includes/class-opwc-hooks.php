@@ -185,8 +185,13 @@ class OPWC_Hooks
         $orders = wc_get_orders(array(
             // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- No HPOS-native alternative exists for looking up orders by custom meta value via wc_get_orders().
             'meta_query' => array(
+                'relation' => 'OR',
                 array(
                     'key'   => '_ownpay_payment_id',
+                    'value' => $payment_id,
+                ),
+                array(
+                    'key'   => '_czpay_payment_id',
                     'value' => $payment_id,
                 ),
             ),
@@ -198,7 +203,7 @@ class OPWC_Hooks
         }
 
         $order = $orders[0];
-        if ($order->get_payment_method() !== 'ownpay') {
+        if (!in_array($order->get_payment_method(), ['ownpay', 'czpay'], true)) {
             return;
         }
 
@@ -228,8 +233,9 @@ class OPWC_Hooks
         // Verify status server-side if order is not yet paid
         if (!$order->is_paid()) {
             $gateways = WC()->payment_gateways()->payment_gateways();
-            if (isset($gateways['ownpay']) && method_exists($gateways['ownpay'], 'verify_payment_by_id')) {
-                $data = $gateways['ownpay']->verify_payment_by_id($payment_id, $order);
+            $active_gw = $gateways['ownpay'] ?? ($gateways['czpay'] ?? null);
+            if ($active_gw && method_exists($active_gw, 'verify_payment_by_id')) {
+                $data = $active_gw->verify_payment_by_id($payment_id, $order);
 
                 if (!empty($data)) {
                     $verified_status = sanitize_key($data['status'] ?? '');
@@ -288,6 +294,9 @@ class OPWC_Hooks
         }
 
         $notice_status = WC()->session->get('opwc_redirect_notice');
+        if (empty($notice_status)) {
+            $notice_status = WC()->session->get('czpwc_redirect_notice');
+        }
 
         if (empty($notice_status)) {
             return;
@@ -295,6 +304,7 @@ class OPWC_Hooks
 
         // Clear immediately so it only shows once
         WC()->session->set('opwc_redirect_notice', null);
+        WC()->session->set('czpwc_redirect_notice', null);
 
         if ($notice_status === 'failed') {
             wc_add_notice(
