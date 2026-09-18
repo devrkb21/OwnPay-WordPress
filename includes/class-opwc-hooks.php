@@ -176,8 +176,8 @@ class OPWC_Hooks
             return;
         }
 
-        // Only handle failed or cancelled statuses
-        if (!in_array($status_param, array('failed', 'cancelled'), true)) {
+        // Only handle failed, cancelled, or pending statuses
+        if (!in_array($status_param, array('failed', 'cancelled', 'pending'), true)) {
             return;
         }
 
@@ -203,6 +203,27 @@ class OPWC_Hooks
         }
 
         $order_id = $order->get_id();
+
+        // When customer submitted manual payment proof in OwnPay and was redirected back
+        if ($status_param === 'pending') {
+            $order->add_order_note(
+                __('OwnPay Redirect: Customer submitted manual payment details. Awaiting merchant approval in OwnPay.', 'ownpay-payment-gateway')
+            );
+
+            // Store notice status in WooCommerce session so it survives the redirect
+            if (function_exists('WC') && WC()->session) {
+                WC()->session->set('opwc_redirect_notice', 'pending');
+            }
+
+            // Redirect to Pay for Order / Pending Payment page (guest-compatible with order key)
+            $redirect_url = $order->get_checkout_payment_url();
+            if (empty($redirect_url)) {
+                $redirect_url = home_url(add_query_arg(array(), $GLOBALS['wp']->request));
+                $redirect_url = remove_query_arg(array('payment_id', 'status'), $redirect_url);
+            }
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
 
         // Verify status server-side if order is not yet paid
         if (!$order->is_paid()) {
@@ -283,6 +304,11 @@ class OPWC_Hooks
         } elseif ($notice_status === 'cancelled') {
             wc_add_notice(
                 __('Your payment was cancelled.', 'ownpay-payment-gateway'),
+                'notice'
+            );
+        } elseif ($notice_status === 'pending') {
+            wc_add_notice(
+                __('Your payment details have been submitted and are awaiting verification. Your order remains pending until payment is confirmed.', 'ownpay-payment-gateway'),
                 'notice'
             );
         }
